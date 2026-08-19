@@ -246,7 +246,7 @@ h2 .hl{color:var(--gold)}
 </head>
 <body>
 <button class="snd" id="snd" type="button" aria-pressed="false"
-        aria-label="הפעלת צלילי ים"><svg viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path class="cone" d="M9.2 3.4 5.4 6.6H3a1 1 0 0 0-1 1v4.8a1 1 0 0 0 1 1h2.4l3.8 3.2a.7.7 0 0 0 1.15-.54V3.94A.7.7 0 0 0 9.2 3.4Z"/><path class="arc" d="M13.2 7.3a3.8 3.8 0 0 1 0 5.4"/><path class="arc" d="M15.6 5.2a7 7 0 0 1 0 9.6"/><path class="slash" d="M13.4 7.6 17.6 12.4M17.6 7.6 13.4 12.4"/></svg><span class="lbl">צלילי ים</span></button>
+        aria-label="הפעלת המוזיקה"><svg viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path class="cone" d="M9.2 3.4 5.4 6.6H3a1 1 0 0 0-1 1v4.8a1 1 0 0 0 1 1h2.4l3.8 3.2a.7.7 0 0 0 1.15-.54V3.94A.7.7 0 0 0 9.2 3.4Z"/><path class="arc" d="M13.2 7.3a3.8 3.8 0 0 1 0 5.4"/><path class="arc" d="M15.6 5.2a7 7 0 0 1 0 9.6"/><path class="slash" d="M13.4 7.6 17.6 12.4M17.6 7.6 13.4 12.4"/></svg><span class="lbl">מוזיקה</span></button>
 <canvas id="view"></canvas>
 <div class="scrim"></div>
 <div class="grain"></div>
@@ -696,92 +696,182 @@ h2 .hl{color:var(--gold)}
   tick();setInterval(tick,1000);
 })();
 /* =====================================================================
-   Sea, synthesised. No audio file: two layers of filtered noise breathing
-   at unrelated rates give surf that never loops, and a slow four-note pad
-   sits under it. Scroll position dims the pad as the page reaches night.
-   Off by default and only ever started by a tap, because people open this
-   at the office.
+   A calm piece, synthesised. No audio file: no licensing, no download
+   weight, and no 30-second loop that gives itself away.
+
+   A soft bell voice wanders a D-major pentatonic scale by small steps, so
+   every phrase is new but nothing can ever land dissonant. A low pad and a
+   generated reverb sit under it. Browsers refuse to start audio on their
+   own, so it arms on the very first touch anywhere on the page - the first
+   scroll is enough - and the button is only there to switch it off.
    ===================================================================== */
 (function(){
   var btn=document.getElementById("snd");
-  if(!btn||!(window.AudioContext||window.webkitAudioContext)){ if(btn)btn.remove(); return; }
-  var ctx=null, master=null, tone=null, on=false, surf=[], pad=[];
+  var AC=window.AudioContext||window.webkitAudioContext;
+  if(!AC){ if(btn)btn.remove(); return; }
 
-  function noiseBuffer(){
-    var n=ctx.sampleRate*5, buf=ctx.createBuffer(1,n,ctx.sampleRate), d=buf.getChannelData(0);
-    var b0=0,b1=0,b2=0;
-    for(var i=0;i<n;i++){
-      var w=Math.random()*2-1;                 /* pinked: surf has no top end */
-      b0=.99765*b0+w*.0990460;
-      b1=.96300*b1+w*.2965164;
-      b2=.57000*b2+w*1.0526913;
-      d[i]=(b0+b1+b2+w*.1848)*.22;
+  var ctx=null,master=null,tone=null,bus=null,wet=null,timer=null,on=false;
+  var LEVEL=0.90;
+
+  /* D major pentatonic across three octaves: every note agrees with the pad */
+  var SCALE=[146.83,164.81,185.00,220.00,246.94,
+             293.66,329.63,369.99,440.00,493.88,
+             587.33,659.25,739.99,880.00,987.77];
+  var here=7, since=0;
+
+  function reverbIR(sec,decay){
+    var n=Math.floor(ctx.sampleRate*sec), b=ctx.createBuffer(2,n,ctx.sampleRate);
+    for(var c=0;c<2;c++){
+      var d=b.getChannelData(c);
+      for(var i=0;i<n;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/n,decay);
     }
-    return buf;
+    return b;
   }
-  function lfo(rate,depth,target,base){
-    var o=ctx.createOscillator(), g=ctx.createGain();
-    o.type="sine";o.frequency.value=rate;g.gain.value=depth;
-    o.connect(g);g.connect(target);target.value=base;o.start();
-    return o;
-  }
-  function build(){
-    ctx=new (window.AudioContext||window.webkitAudioContext)();
-    master=ctx.createGain();master.gain.value=0;
-    tone=ctx.createBiquadFilter();tone.type="lowpass";tone.frequency.value=2400;tone.Q.value=.4;
-    tone.connect(master);master.connect(ctx.destination);
 
-    var buf=noiseBuffer();
-    /* two swells at 14s and 23s: their drift is what stops it sounding looped */
-    [{f:420,q:.55,rate:1/14,g:.34},{f:1100,q:.8,rate:1/23,g:.20}].forEach(function(s){
-      var src=ctx.createBufferSource();src.buffer=buf;src.loop=true;
-      var bp=ctx.createBiquadFilter();bp.type="bandpass";bp.frequency.value=s.f;bp.Q.value=s.q;
-      var gn=ctx.createGain();
-      src.connect(bp);bp.connect(gn);gn.connect(tone);
-      lfo(s.rate,s.g*.85,gn.gain,s.g);
-      lfo(s.rate*0.61,s.f*.35,bp.frequency,s.f);
-      src.start();
-      surf.push(gn);
-    });
-
-    /* a wide, slow D-major-ish pad, barely there */
-    [146.83,220.00,369.99,554.37].forEach(function(hz,i){
+  /* one struck tone: a few inharmonic partials, each dying at its own rate */
+  function bell(t,hz,vel){
+    var parts=[[1,1,4.4],[2.01,.30,2.6],[3.03,.13,1.7],[4.52,.055,1.1]];
+    for(var i=0;i<parts.length;i++){
+      var pp=parts[i];
       var o=ctx.createOscillator(), g=ctx.createGain();
-      o.type=i<2?"sine":"triangle";
-      o.frequency.value=hz;
-      g.gain.value=0;
-      o.connect(g);g.connect(tone);
-      lfo(1/(19+i*7), .022, g.gain, .030-i*.005);
-      lfo(1/(11+i*3), 3.2, o.detune, i%2?4:-4);
-      o.start();
-      pad.push(g);
-    });
+      o.type="sine";
+      o.frequency.value=hz*pp[0];
+      g.gain.setValueAtTime(0.0001,t);
+      g.gain.exponentialRampToValueAtTime(Math.max(.0002,vel*pp[1]),t+.014);
+      g.gain.exponentialRampToValueAtTime(.0001,t+pp[2]);
+      o.connect(g);g.connect(bus);
+      o.start(t);o.stop(t+pp[2]+.15);
+    }
   }
+
+  /* a gentle random walk: mostly steps, the occasional leap, pulled back
+     towards the middle of the range so the line never drifts away */
+  function step(){
+    var moves=[-2,-1,-1,-1,0,1,1,1,2,3,-3];
+    var m=moves[(Math.random()*moves.length)|0];
+    here+=m;
+    if(here<2)here=2+((Math.random()*3)|0);
+    if(here>13)here=13-((Math.random()*3)|0);
+    return SCALE[here];
+  }
+
+  var next=0;
+  function schedule(){
+    if(!ctx)return;
+    var ahead=ctx.currentTime+1.2;
+    while(next<ahead){
+      since++;
+      if(since%9===0){                       /* an anchor low note, now and then */
+        bell(next,SCALE[0],.42);
+        bell(next+.02,SCALE[3],.28);
+        next+=3.4+Math.random()*1.2;
+      }else{
+        var hz=step();
+        bell(next,hz,.36+Math.random()*.14);
+        if(Math.random()<.28) bell(next+.28+Math.random()*.2,SCALE[Math.min(14,here+2)],.20);
+        next+=1.5+Math.random()*1.5;
+      }
+    }
+  }
+
+  function build(){
+    ctx=new AC();
+    master=ctx.createGain();master.gain.value=0;
+    tone=ctx.createBiquadFilter();tone.type="lowpass";
+    tone.frequency.value=3200;tone.Q.value=.3;
+    var lim=ctx.createDynamicsCompressor();
+    lim.threshold.value=-9;lim.knee.value=6;lim.ratio.value=8;
+    lim.attack.value=.005;lim.release.value=.25;
+    tone.connect(lim);lim.connect(master);master.connect(ctx.destination);
+
+    bus=ctx.createGain();bus.gain.value=1;
+    var dry=ctx.createGain();dry.gain.value=.78;
+    bus.connect(dry);dry.connect(tone);
+
+    var rev=ctx.createConvolver();rev.buffer=reverbIR(3.4,2.4);
+    wet=ctx.createGain();wet.gain.value=.55;
+    bus.connect(rev);rev.connect(wet);wet.connect(tone);
+
+    /* the bed: D2, A2, F#3, held and slowly breathing */
+    [73.42,110.00,185.00].forEach(function(hz,i){
+      var o=ctx.createOscillator(), g=ctx.createGain();
+      o.type=i===2?"triangle":"sine";
+      o.frequency.value=hz;
+      g.gain.value=.075-i*.016;
+      var l=ctx.createOscillator(), lg=ctx.createGain();
+      l.type="sine";l.frequency.value=1/(17+i*6);lg.gain.value=.030-i*.008;
+      l.connect(lg);lg.connect(g.gain);l.start();
+      o.connect(g);g.connect(tone);o.start();
+    });
+
+    next=ctx.currentTime+.3;
+    timer=setInterval(schedule,300);
+    schedule();
+  }
+
   function ramp(to,secs){
     var t=ctx.currentTime;
     master.gain.cancelScheduledValues(t);
     master.gain.setValueAtTime(master.gain.value,t);
     master.gain.linearRampToValueAtTime(to,t+secs);
   }
-  btn.addEventListener("click",function(){
+  function paint(){
+    if(!btn)return;
+    btn.setAttribute("aria-pressed",on?"true":"false");
+    btn.setAttribute("aria-label",on?"השתקת המוזיקה":"הפעלת המוזיקה");
+  }
+  function play(){
     if(!ctx)build();
     if(ctx.state==="suspended")ctx.resume();
-    on=!on;
-    btn.setAttribute("aria-pressed",on?"true":"false");
-    btn.setAttribute("aria-label",on?"השתקת צלילי ים":"הפעלת צלילי ים");
-    ramp(on?0.24:0, on?3.0:1.2);
+    on=true;ramp(LEVEL,3.5);paint();
+  }
+  function stop(){ if(!ctx)return; on=false;ramp(0,1.1);paint(); }
+
+  /* browsers will not let a page start audio unprompted, so arm on the very
+     first gesture of any kind - the first scroll counts */
+  var armed=false;
+  function disarm(){
+    ["pointerdown","touchend","keydown","click","wheel"].forEach(function(ev){
+      window.removeEventListener(ev,arm,true);
+    });
+  }
+  function arm(e){
+    if(armed)return;
+    /* a tap on the button itself is handled by the button, so it never both
+       starts and stops the music in one press */
+    if(e&&e.target&&e.target.closest&&e.target.closest("#snd")){armed=true;disarm();return;}
+    armed=true;disarm();play();
+  }
+  ["pointerdown","touchend","keydown","click","wheel"].forEach(function(ev){
+    window.addEventListener(ev,arm,{capture:true,passive:true});
   });
-  /* the light dims towards night, so let the sound dim with it */
+  /* and try straight away, in case this browser already trusts the site */
+  try{
+    var probe=new AC();
+    if(probe.state==="running"){ probe.close(); armed=true; play(); }
+    else probe.close();
+  }catch(e){}
+
+  if(btn) btn.addEventListener("click",function(e){
+    e.stopPropagation();
+    armed=true;disarm();
+    (on&&ctx)?stop():play();
+  });
+
   addEventListener("scroll",function(){
     if(!ctx||!on)return;
     var max=Math.max(1,document.body.scrollHeight-innerHeight);
     var p=Math.min(1,Math.max(0,scrollY/max));
-    tone.frequency.setTargetAtTime(2400-p*1650,ctx.currentTime,1.2);
+    tone.frequency.setTargetAtTime(3200-p*2100,ctx.currentTime,1.4);
+    if(wet) wet.gain.setTargetAtTime(.55+p*.30,ctx.currentTime,1.4);
   },{passive:true});
+
   addEventListener("visibilitychange",function(){
     if(!ctx||!on)return;
-    ramp(document.hidden?0:0.24,document.hidden?0.4:1.6);
+    ramp(document.hidden?0:LEVEL,document.hidden?.35:1.6);
   });
+
+  window.__sea=function(){return {ctx:ctx,master:master,on:on};};
 })();
 
 </script>
