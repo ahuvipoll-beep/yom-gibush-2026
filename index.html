@@ -79,6 +79,10 @@ main{position:relative;z-index:3}
 .snd[aria-pressed="true"] svg .arc{opacity:1;animation:ripple 2.6s ease-in-out infinite}
 .snd[aria-pressed="true"] svg .arc:nth-of-type(2){animation-delay:.35s}
 @keyframes ripple{0%,100%{opacity:.35}50%{opacity:1}}
+.snd[data-idle="1"]{animation:fade .9s 2.4s forwards, nudge 2.8s 3.4s ease-in-out infinite}
+@keyframes nudge{0%,88%,100%{transform:none;box-shadow:0 0 0 0 rgba(255,217,160,0)}
+  92%{transform:scale(1.06);box-shadow:0 0 0 7px rgba(255,217,160,.12)}
+  96%{transform:scale(1.02);box-shadow:0 0 0 12px rgba(255,217,160,0)}}
 
 /* ================================ hero ================================== */
 .hero{min-height:100svh;display:flex;flex-direction:column;align-items:center;
@@ -696,40 +700,71 @@ h2 .hl{color:var(--gold)}
   tick();setInterval(tick,1000);
 })();
 /* =====================================================================
-   The soundtrack, synthesised. No audio file: no licensing exposure, no
-   download weight, nothing that can be taken down.
+   The soundtrack: an original ceremonial march, because the invitation says
+   the staff are receiving audience for the day, so give them a guard turnout.
 
-   An original ceremonial march, because the invitation says the staff are
-   "receiving audience" for the day - so give them a guard turnout. Brass
-   section, military snare, bass drum and oom-pah bass over an eight-bar
-   theme in D at 112bpm.
+   It ships as music.mp3, bounced offline from the synth in render_music.html.
+   A phone inside the WhatsApp browser cannot synthesise dozens of voices a
+   second, and playing a plain <audio> element - with no AudioContext in the
+   chain at all - is also the best chance of being heard on iOS. The synth
+   only runs as a fallback if the file is missing.
 
-   If a licensed music.mp3 is dropped beside this page it takes over and the
-   synth stands down. Browsers refuse to start audio unprompted, so it arms
-   on the first gesture of any kind - the first scroll counts - and the
-   corner button is only there to switch it off.
+   Browsers refuse to start audio unprompted, so it arms on the first gesture
+   of any kind; the first scroll counts. Until sound is actually playing the
+   corner button pulses, so if a browser blocks it there is something obvious
+   to press.
    ===================================================================== */
 (function(){
   var btn=document.getElementById("snd");
+  var el=null, on=false, fader=null;
+  var VOL=0.9;
+
+  function paint(){
+    if(!btn)return;
+    btn.setAttribute("aria-pressed",on?"true":"false");
+    btn.setAttribute("aria-label",on?"השתקת המוזיקה":"הפעלת המוזיקה");
+    if(on) btn.removeAttribute("data-idle"); else btn.setAttribute("data-idle","1");
+  }
+
+  /* ---------------- the file, played straight ---------------- */
+  function makeEl(){
+    el=document.createElement("audio");
+    el.src="music.mp3";
+    el.loop=true;
+    el.preload="auto";
+    el.setAttribute("playsinline","");
+    el.setAttribute("webkit-playsinline","");
+    try{ el.volume=0; }catch(e){}   /* iOS ignores this and plays at full */
+    document.body.appendChild(el);
+  }
+  function fade(to,ms){
+    if(!el)return;
+    if(fader)clearInterval(fader);
+    var from=el.volume, t0=Date.now();
+    fader=setInterval(function(){
+      var k=Math.min(1,(Date.now()-t0)/ms);
+      try{ el.volume=from+(to-from)*k; }catch(e){}
+      if(k>=1){ clearInterval(fader);fader=null; if(to===0&&el) el.pause(); }
+    },40);
+  }
+  function playFile(){
+    if(!el)makeEl();
+    var pr=el.play();
+    if(pr&&pr.catch) pr.catch(function(){ on=false;paint(); });
+    on=true;paint();fade(VOL,1200);
+  }
+  function stopFile(){ if(!el)return; on=false;paint();fade(0,600); }
+
+  /* ---------------- fallback: synthesise it live ---------------- */
   var AC=window.AudioContext||window.webkitAudioContext;
-  if(!AC){ if(btn)btn.remove(); return; }
-
-  var ctx=null,master=null,tone=null,lim=null,noise=null;
-  var busBrass=null,busDrum=null,busBass=null,hall=null;
-  var timer=null,on=false,step=0,next=0,el=null,mode="synth";
-  var LEVEL=0.80;
-  var BPM=112, SIX=15/112;            /* seconds per sixteenth at 112bpm */
-
-  /* D major. Semitones above D4, so the brass sits in a real bugle range. */
+  var ctx=null,master=null,tone=null,noise=null;
+  var busBrass=null,busDrum=null,busBass=null,hall=null,step=0,next=0;
+  var BPM=112, SIX=15/112;
   function hz(n){ return 293.66*Math.pow(2,n/12); }
-  var D=0,Fs=4,A=7,B=9,Cs=13,D5=12,E5=14,Fs5=16,G5=17,A5=19,B5=21,D6=24;
-
-  /* eight bars: D D A A D G A D */
+  var A=7,B=9,Cs=13,D5=12,E5=14,Fs5=16,G5=17,A5=19,B5=21,D6=24;
   var CHORD=[[0,4,7],[0,4,7],[7,11,14],[7,11,14],[0,4,7],[5,9,12],[7,11,14],[0,4,7]];
-  var ROOT =[  -12,   -12,    -5,   -5,   -12,    -7,   -5,  -12];
-  var FIFTH=[   -5,    -5,   -17,  -17,    -5,     0,  -17,   -5];
-
-  /* the theme: [sixteenth in the loop, semitone, length in sixteenths] */
+  var ROOT =[-12,-12,-5,-5,-12,-7,-5,-12];
+  var FIFTH=[ -5, -5,-17,-17,-5, 0,-17,-5];
   var THEME=[
     [  0,A ,3],[  3,D5,1],[  4,D5,3],[  7,Fs5,1],[  8,A5,4],[ 12,Fs5,2],[ 14,D5,2],
     [ 16,E5,3],[ 19,Fs5,1],[ 20,G5,4],[ 24,Fs5,6],[ 30,A ,2],
@@ -740,27 +775,9 @@ h2 .hl{color:var(--gold)}
     [ 96,Fs5,3],[ 99,G5,1],[100,A5,4],[104,E5,4],[108,Cs,4],
     [112,D5,10]
   ];
-  var THEMEAT={};
-  THEME.forEach(function(n){ THEMEAT[n[0]]=n; });
+  var AT={}; THEME.forEach(function(n){ AT[n[0]]=n; });
 
-  function noiseBuf(){
-    var n=ctx.sampleRate*2, b=ctx.createBuffer(1,n,ctx.sampleRate), d=b.getChannelData(0);
-    for(var i=0;i<n;i++) d[i]=Math.random()*2-1;
-    return b;
-  }
-  function hallIR(sec,decay){
-    var n=Math.floor(ctx.sampleRate*sec), b=ctx.createBuffer(2,n,ctx.sampleRate);
-    for(var c=0;c<2;c++){
-      var d=b.getChannelData(c);
-      for(var i=0;i<n;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/n,decay);
-    }
-    return b;
-  }
-
-  /* a brass voice: detuned saws opened by a filter envelope, with vibrato
-     only once the note has had time to settle - which is what makes it read
-     as a played instrument rather than a synth pad */
-  function brass(t,f,dur,vel,dest){
+  function brass(t,f,dur,vel){
     var g=ctx.createGain(), flt=ctx.createBiquadFilter();
     flt.type="lowpass";flt.Q.value=3.2;
     flt.frequency.setValueAtTime(520,t);
@@ -770,183 +787,119 @@ h2 .hl{color:var(--gold)}
     g.gain.exponentialRampToValueAtTime(vel,t+.035);
     g.gain.setValueAtTime(vel,t+dur*.72);
     g.gain.exponentialRampToValueAtTime(.0001,t+dur);
-    flt.connect(g);g.connect(dest||busBrass);
-
-    [-7,0,7].forEach(function(cents,i){
+    flt.connect(g);g.connect(busBrass);
+    [-7,0,7].forEach(function(cents){
       var o=ctx.createOscillator();
-      o.type=i===1?"sawtooth":"sawtooth";
-      o.frequency.value=f;o.detune.value=cents;
-      if(dur>.28){
-        var v=ctx.createOscillator(), vg=ctx.createGain();
-        v.type="sine";v.frequency.value=5.4;
-        vg.gain.setValueAtTime(0,t);
-        vg.gain.linearRampToValueAtTime(6,t+Math.min(.35,dur*.5));
-        v.connect(vg);vg.connect(o.detune);v.start(t);v.stop(t+dur+.1);
-      }
+      o.type="sawtooth";o.frequency.value=f;o.detune.value=cents;
       o.connect(flt);o.start(t);o.stop(t+dur+.08);
     });
-    var sub=ctx.createOscillator();
-    sub.type="square";sub.frequency.value=f/2;
-    var sg=ctx.createGain();sg.gain.value=.22;
-    sub.connect(sg);sg.connect(flt);
-    sub.start(t);sub.stop(t+dur+.08);
   }
-
   function snare(t,vel,buzz){
     var src=ctx.createBufferSource();src.buffer=noise;
     var bp=ctx.createBiquadFilter();bp.type="bandpass";
     bp.frequency.value=buzz?3200:1900;bp.Q.value=buzz?.7:1.1;
-    var hp=ctx.createBiquadFilter();hp.type="highpass";hp.frequency.value=380;
-    var g=ctx.createGain();
-    var dec=buzz?.09:.055;
+    var g=ctx.createGain(),dec=buzz?.09:.055;
     g.gain.setValueAtTime(vel,t);
     g.gain.exponentialRampToValueAtTime(.0001,t+dec);
-    src.connect(bp);bp.connect(hp);hp.connect(g);g.connect(busDrum);
+    src.connect(bp);bp.connect(g);g.connect(busDrum);
     src.start(t);src.stop(t+dec+.03);
   }
   function bassDrum(t,vel){
-    var o=ctx.createOscillator(), g=ctx.createGain();
+    var o=ctx.createOscillator(),g=ctx.createGain();
     o.type="sine";
     o.frequency.setValueAtTime(120,t);
     o.frequency.exponentialRampToValueAtTime(42,t+.09);
     g.gain.setValueAtTime(vel,t);
     g.gain.exponentialRampToValueAtTime(.0001,t+.34);
-    o.connect(g);g.connect(busDrum);
-    o.start(t);o.stop(t+.38);
-  }
-  function crash(t,vel){
-    var src=ctx.createBufferSource();src.buffer=noise;
-    var hp=ctx.createBiquadFilter();hp.type="highpass";hp.frequency.value=5200;
-    var g=ctx.createGain();
-    g.gain.setValueAtTime(vel,t);
-    g.gain.exponentialRampToValueAtTime(.0001,t+1.5);
-    src.connect(hp);hp.connect(g);g.connect(busDrum);
-    src.start(t);src.stop(t+1.6);
+    o.connect(g);g.connect(busDrum);o.start(t);o.stop(t+.38);
   }
   function bassNote(t,f,dur,vel){
-    var o=ctx.createOscillator(), o2=ctx.createOscillator(),
-        g=ctx.createGain(), flt=ctx.createBiquadFilter();
+    var o=ctx.createOscillator(),g=ctx.createGain(),flt=ctx.createBiquadFilter();
     flt.type="lowpass";flt.frequency.value=680;flt.Q.value=.8;
     o.type="sawtooth";o.frequency.value=f;
-    o2.type="sine";o2.frequency.value=f/2;
     g.gain.setValueAtTime(.0001,t);
     g.gain.exponentialRampToValueAtTime(vel,t+.02);
     g.gain.exponentialRampToValueAtTime(.0001,t+dur);
-    o.connect(flt);o2.connect(flt);flt.connect(g);g.connect(busBass);
-    o.start(t);o2.start(t);o.stop(t+dur+.05);o2.stop(t+dur+.05);
+    o.connect(flt);flt.connect(g);g.connect(busBass);
+    o.start(t);o.stop(t+dur+.05);
   }
-
   function schedule(){
     if(!ctx)return;
     var ahead=ctx.currentTime+.7;
     while(next<ahead){
       var i=step%128, bar=(i/16)|0, inBar=i%16, beat=inBar%4;
-
-      /* --- percussion: the guard keeps time --- */
-      if(inBar===0){ bassDrum(next,.85); if(bar===0||bar===4) crash(next,.16); }
+      if(inBar===0) bassDrum(next,.85);
       if(inBar===8) bassDrum(next,.62);
       if(beat===0) snare(next,inBar===0?.34:.22,false);
       else if(beat===2) snare(next,.13,false);
       else snare(next,.055,true);
-      if(inBar===14&&(bar===3||bar===7)){          /* a roll into the phrase */
-        for(var r=0;r<8;r++) snare(next+r*SIX/4,.10+r*.016,true);
-      }
-
-      /* --- oom-pah under the tune --- */
-      if(inBar===0)  bassNote(next,hz(ROOT[bar]),SIX*3.2,.40);
-      if(inBar===8)  bassNote(next,hz(FIFTH[bar]),SIX*3.2,.34);
-      if(inBar===4||inBar===12){
-        CHORD[bar].forEach(function(sn){
-          brass(next,hz(sn+12),SIX*2.4,.055);
-        });
-      }
-
-      /* --- the theme, doubled a sixth below like a brass section --- */
-      var n=THEMEAT[i];
+      if(inBar===0) bassNote(next,hz(ROOT[bar]),SIX*3.2,.40);
+      if(inBar===8) bassNote(next,hz(FIFTH[bar]),SIX*3.2,.34);
+      if(inBar===4||inBar===12)
+        CHORD[bar].forEach(function(sn){ brass(next,hz(sn+12),SIX*2.4,.055); });
+      var n=AT[i];
       if(n){
         var dur=n[2]*SIX*.94;
         brass(next,hz(n[1]),dur,.165);
         brass(next,hz(n[1]-9),dur,.075);
       }
-
       step++;next+=SIX;
     }
   }
-
-  function buildFile(){
-    el=new Audio("music.mp3");
-    el.loop=true;el.preload="auto";el.crossOrigin="anonymous";
-    var src=ctx.createMediaElementSource(el);
-    src.connect(tone);
-    var pr=el.play();
-    if(pr&&pr.catch) pr.catch(function(){ el=null;mode="synth";buildSynth(); });
-  }
-
   function buildSynth(){
-    noise=noiseBuf();
-
-    hall=ctx.createConvolver();hall.buffer=hallIR(2.2,3.0);
-    var wet=ctx.createGain();wet.gain.value=.30;
-    hall.connect(wet);wet.connect(tone);
-
-    busBrass=ctx.createGain();busBrass.gain.value=.52;
-    busBrass.connect(tone);busBrass.connect(hall);
-    busDrum=ctx.createGain();busDrum.gain.value=.50;
-    busDrum.connect(tone);busDrum.connect(hall);
-    busBass=ctx.createGain();busBass.gain.value=.60;
-    busBass.connect(tone);
-
-    step=0;next=ctx.currentTime+.12;
-    timer=setInterval(schedule,90);
-    schedule();
-  }
-
-  function build(){
     ctx=new AC();
     master=ctx.createGain();master.gain.value=0;
-    tone=ctx.createBiquadFilter();tone.type="lowpass";
-    tone.frequency.value=7000;tone.Q.value=.2;
-    lim=ctx.createDynamicsCompressor();
+    tone=ctx.createBiquadFilter();tone.type="lowpass";tone.frequency.value=7000;
+    var lim=ctx.createDynamicsCompressor();
     lim.threshold.value=-10;lim.knee.value=8;lim.ratio.value=10;
     lim.attack.value=.0018;lim.release.value=.20;
     tone.connect(lim);lim.connect(master);master.connect(ctx.destination);
-    if(mode==="file") buildFile(); else buildSynth();
+    var n=ctx.sampleRate*2, b=ctx.createBuffer(1,n,ctx.sampleRate), d=b.getChannelData(0);
+    for(var i=0;i<n;i++) d[i]=Math.random()*2-1;
+    noise=b;
+    busBrass=ctx.createGain();busBrass.gain.value=.52;busBrass.connect(tone);
+    busDrum=ctx.createGain();busDrum.gain.value=.50;busDrum.connect(tone);
+    busBass=ctx.createGain();busBass.gain.value=.60;busBass.connect(tone);
+    step=0;next=ctx.currentTime+.12;
+    setInterval(schedule,90);schedule();
   }
-
-  try{
-    fetch("music.mp3",{method:"HEAD"}).then(function(r){ if(r.ok) mode="file"; })
-      .catch(function(){});
-  }catch(e){}
-
-  function ramp(to,secs){
+  function playSynth(){
+    if(!ctx)buildSynth();
+    if(ctx.state==="suspended")ctx.resume();
+    on=true;paint();
     var t=ctx.currentTime;
     master.gain.cancelScheduledValues(t);
     master.gain.setValueAtTime(master.gain.value,t);
-    master.gain.linearRampToValueAtTime(to,t+secs);
+    master.gain.linearRampToValueAtTime(.8,t+1.4);
   }
-  function paint(){
-    if(!btn)return;
-    btn.setAttribute("aria-pressed",on?"true":"false");
-    btn.setAttribute("aria-label",on?"השתקת המוזיקה":"הפעלת המוזיקה");
-  }
-  function play(){
-    if(!ctx)build();
-    if(ctx.state==="suspended")ctx.resume();
-    if(el&&el.paused) el.play();
-    on=true;ramp(LEVEL,1.4);paint();
-  }
-  function stop(){
+  function stopSynth(){
     if(!ctx)return;
-    on=false;ramp(0,.8);paint();
-    if(el) setTimeout(function(){ if(!on) el.pause(); },900);
+    on=false;paint();
+    var t=ctx.currentTime;
+    master.gain.cancelScheduledValues(t);
+    master.gain.setValueAtTime(master.gain.value,t);
+    master.gain.linearRampToValueAtTime(0,t+.8);
   }
 
+  /* ---------------- which one ---------------- */
+  var mode="file";
+  function play(){ mode==="file"?playFile():playSynth(); }
+  function stop(){ mode==="file"?stopFile():stopSynth(); }
+
+  if(!window.Audio){ mode="synth"; }
+  if(mode==="synth"&&!AC){ if(btn)btn.remove(); return; }
+
+  /* if the file will not load, fall back to synthesising it live */
+  (function(){
+    var probe=new Audio();
+    probe.addEventListener("error",function(){ if(!on){ mode=AC?"synth":"file"; } });
+    probe.src="music.mp3";
+  })();
+
+  /* ---------------- arming ---------------- */
   var armed=false;
-  function disarm(){
-    ["pointerdown","touchend","keydown","click","wheel"].forEach(function(ev){
-      window.removeEventListener(ev,arm,true);
-    });
-  }
+  var EVS=["pointerdown","touchend","keydown","click","wheel"];
+  function disarm(){ EVS.forEach(function(e){ window.removeEventListener(e,arm,true); }); }
   function arm(e){
     if(armed)return;
     /* a tap on the button is the button's job, so it never starts and stops
@@ -954,38 +907,31 @@ h2 .hl{color:var(--gold)}
     if(e&&e.target&&e.target.closest&&e.target.closest("#snd")){armed=true;disarm();return;}
     armed=true;disarm();play();
   }
-  ["pointerdown","touchend","keydown","click","wheel"].forEach(function(ev){
-    window.addEventListener(ev,arm,{capture:true,passive:true});
-  });
-  try{
-    var probe=new AC();
-    if(probe.state==="running"){ probe.close(); armed=true; play(); }
-    else probe.close();
-  }catch(e){}
+  EVS.forEach(function(e){ window.addEventListener(e,arm,{capture:true,passive:true}); });
+
+  /* and try straight away, in case this browser already trusts the site */
+  if(mode==="file"){
+    makeEl();
+    el.addEventListener("playing",function(){ on=true;paint(); });
+    var t=el.play();
+    if(t&&t.then) t.then(function(){ armed=true;disarm();on=true;paint();fade(VOL,1200); })
+                   .catch(function(){});
+  }
 
   if(btn) btn.addEventListener("click",function(e){
     e.stopPropagation();
     armed=true;disarm();
-    (on&&ctx)?stop():play();
+    on?stop():play();
   });
-
-  /* the parade passes on as the page reaches night: brass and drums step
-     back, the hall stays */
-  addEventListener("scroll",function(){
-    if(!ctx||!on)return;
-    var max=Math.max(1,document.body.scrollHeight-innerHeight);
-    var p=Math.min(1,Math.max(0,scrollY/max));
-    tone.frequency.setTargetAtTime(7000-p*4200,ctx.currentTime,1.4);
-    if(busDrum)  busDrum.gain.setTargetAtTime(.50-p*.26,ctx.currentTime,1.6);
-    if(busBrass) busBrass.gain.setTargetAtTime(.52-p*.14,ctx.currentTime,1.6);
-  },{passive:true});
 
   addEventListener("visibilitychange",function(){
-    if(!ctx||!on)return;
-    ramp(document.hidden?0:LEVEL,document.hidden?.3:1.2);
+    if(!on)return;
+    if(document.hidden){ if(el)el.pause(); }
+    else if(el) el.play();
   });
 
-  window.__sea=function(){return {ctx:ctx,master:master,on:on};};
+  paint();
+  window.__sea=function(){return {mode:mode,on:on,el:el,ctx:ctx};};
 })();
 
 </script>
