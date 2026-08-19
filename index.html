@@ -696,116 +696,170 @@ h2 .hl{color:var(--gold)}
   tick();setInterval(tick,1000);
 })();
 /* =====================================================================
-   A calm piece, synthesised. No audio file: no licensing, no download
-   weight, and no 30-second loop that gives itself away.
+   The soundtrack, synthesised. No audio file: no licensing exposure, no
+   download weight, and nothing that can be taken down.
 
-   A soft bell voice wanders a D-major pentatonic scale by small steps, so
-   every phrase is new but nothing can ever land dissonant. A low pad and a
-   generated reverb sit under it. Browsers refuse to start audio on their
-   own, so it arms on the very first touch anywhere on the page - the first
-   scroll is enough - and the button is only there to switch it off.
+   An original piece: a I-V-vi-IV loop in D at 100bpm carries kick, bass,
+   shaker, clap and a running pluck, with a lead line generated fresh on
+   every pass over a D pentatonic, so the loop never announces itself.
+   Browsers refuse to start audio unprompted, so it arms on the first
+   gesture of any kind - the first scroll counts - and the corner button is
+   only there to switch it off.
    ===================================================================== */
 (function(){
   var btn=document.getElementById("snd");
   var AC=window.AudioContext||window.webkitAudioContext;
   if(!AC){ if(btn)btn.remove(); return; }
 
-  var ctx=null,master=null,tone=null,bus=null,wet=null,timer=null,on=false;
-  var LEVEL=0.90;
+  var ctx=null,master=null,tone=null,lim=null,noise=null;
+  var busPluck=null,busLead=null,busDrum=null,padGain=null,echo=null;
+  var timer=null,on=false,step=0,next=0;
+  var LEVEL=0.78, EIGHTH=30/100;   /* 100bpm -> seconds per eighth note */
 
-  /* D major pentatonic across three octaves: every note agrees with the pad */
-  var SCALE=[146.83,164.81,185.00,220.00,246.94,
-             293.66,329.63,369.99,440.00,493.88,
-             587.33,659.25,739.99,880.00,987.77];
-  var here=7, since=0;
+  /* D - A - Bm - G : the progression every uplifting song is built on */
+  var BASS=[146.83,110.00,123.47,98.00];
+  var ARP=[[587.33,739.99,880.00,1174.66],
+           [440.00,554.37,659.25,880.00],
+           [493.88,587.33,739.99,987.77],
+           [392.00,493.88,587.33,784.00]];
+  var PAD=[[146.83,220.00,369.99],
+           [110.00,164.81,329.63],
+           [123.47,185.00,293.66],
+           [98.00,146.83,246.94]];
+  var LEAD=[587.33,659.25,739.99,880.00,987.77,1174.66];
+  var ARPPAT=[0,2,1,3,2,0,3,1];
+  var here=2;
 
-  function reverbIR(sec,decay){
-    var n=Math.floor(ctx.sampleRate*sec), b=ctx.createBuffer(2,n,ctx.sampleRate);
-    for(var c=0;c<2;c++){
-      var d=b.getChannelData(c);
-      for(var i=0;i<n;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/n,decay);
-    }
+  function noiseBuf(){
+    var n=ctx.sampleRate*2, b=ctx.createBuffer(1,n,ctx.sampleRate), d=b.getChannelData(0);
+    for(var i=0;i<n;i++) d[i]=Math.random()*2-1;
     return b;
   }
-
-  /* one struck tone: a few inharmonic partials, each dying at its own rate */
-  function bell(t,hz,vel){
-    var parts=[[1,1,4.4],[2.01,.30,2.6],[3.03,.13,1.7],[4.52,.055,1.1]];
-    for(var i=0;i<parts.length;i++){
-      var pp=parts[i];
+  function burst(t,dest,hp,bp,q,vel,dec){
+    var src=ctx.createBufferSource();src.buffer=noise;
+    var f=ctx.createBiquadFilter();
+    if(bp){f.type="bandpass";f.frequency.value=bp;f.Q.value=q||1;}
+    else {f.type="highpass";f.frequency.value=hp;}
+    var g=ctx.createGain();
+    g.gain.setValueAtTime(vel,t);
+    g.gain.exponentialRampToValueAtTime(.0001,t+dec);
+    src.connect(f);f.connect(g);g.connect(dest);
+    src.start(t);src.stop(t+dec+.05);
+  }
+  function kick(t){
+    var o=ctx.createOscillator(), g=ctx.createGain();
+    o.type="sine";
+    o.frequency.setValueAtTime(140,t);
+    o.frequency.exponentialRampToValueAtTime(44,t+.10);
+    g.gain.setValueAtTime(.80,t);
+    g.gain.exponentialRampToValueAtTime(.0001,t+.30);
+    o.connect(g);g.connect(busDrum);
+    o.start(t);o.stop(t+.34);
+  }
+  function clap(t){
+    burst(t,      busDrum,0,1500,1.1,.30,.02);
+    burst(t+.012, busDrum,0,1500,1.1,.24,.03);
+    burst(t+.028, busDrum,0,1400,0.9,.30,.17);
+  }
+  function bass(t,hz,dec){
+    var o=ctx.createOscillator(), o2=ctx.createOscillator(),
+        g=ctx.createGain(), f=ctx.createBiquadFilter();
+    f.type="lowpass";f.frequency.value=520;f.Q.value=.7;
+    o.type="triangle";o.frequency.value=hz;
+    o2.type="sine";o2.frequency.value=hz/2;
+    g.gain.setValueAtTime(.0001,t);
+    g.gain.exponentialRampToValueAtTime(.42,t+.012);
+    g.gain.exponentialRampToValueAtTime(.0001,t+dec);
+    o.connect(f);o2.connect(f);f.connect(g);g.connect(tone);
+    o.start(t);o2.start(t);o.stop(t+dec+.05);o2.stop(t+dec+.05);
+  }
+  function pluck(t,hz,vel){
+    var o=ctx.createOscillator(), g=ctx.createGain(), f=ctx.createBiquadFilter();
+    f.type="lowpass";f.frequency.setValueAtTime(4200,t);
+    f.frequency.exponentialRampToValueAtTime(900,t+.30);
+    o.type="triangle";o.frequency.value=hz;
+    g.gain.setValueAtTime(.0001,t);
+    g.gain.exponentialRampToValueAtTime(vel,t+.008);
+    g.gain.exponentialRampToValueAtTime(.0001,t+.42);
+    o.connect(f);f.connect(g);g.connect(busPluck);
+    o.start(t);o.stop(t+.48);
+  }
+  function lead(t,hz,vel,dur){
+    [[1,1],[2.0,.22],[3.0,.08]].forEach(function(pp){
       var o=ctx.createOscillator(), g=ctx.createGain();
-      o.type="sine";
-      o.frequency.value=hz*pp[0];
-      g.gain.setValueAtTime(0.0001,t);
-      g.gain.exponentialRampToValueAtTime(Math.max(.0002,vel*pp[1]),t+.014);
-      g.gain.exponentialRampToValueAtTime(.0001,t+pp[2]);
-      o.connect(g);g.connect(bus);
-      o.start(t);o.stop(t+pp[2]+.15);
-    }
+      o.type="sine";o.frequency.value=hz*pp[0];
+      g.gain.setValueAtTime(.0001,t);
+      g.gain.exponentialRampToValueAtTime(Math.max(.0002,vel*pp[1]),t+.03);
+      g.gain.exponentialRampToValueAtTime(.0001,t+dur);
+      o.connect(g);g.connect(busLead);
+      o.start(t);o.stop(t+dur+.1);
+    });
   }
 
-  /* a gentle random walk: mostly steps, the occasional leap, pulled back
-     towards the middle of the range so the line never drifts away */
-  function step(){
-    var moves=[-2,-1,-1,-1,0,1,1,1,2,3,-3];
-    var m=moves[(Math.random()*moves.length)|0];
-    here+=m;
-    if(here<2)here=2+((Math.random()*3)|0);
-    if(here>13)here=13-((Math.random()*3)|0);
-    return SCALE[here];
-  }
-
-  var next=0;
   function schedule(){
     if(!ctx)return;
-    var ahead=ctx.currentTime+1.2;
+    var ahead=ctx.currentTime+.9;
     while(next<ahead){
-      since++;
-      if(since%9===0){                       /* an anchor low note, now and then */
-        bell(next,SCALE[0],.42);
-        bell(next+.02,SCALE[3],.28);
-        next+=3.4+Math.random()*1.2;
-      }else{
-        var hz=step();
-        bell(next,hz,.36+Math.random()*.14);
-        if(Math.random()<.28) bell(next+.28+Math.random()*.2,SCALE[Math.min(14,here+2)],.20);
-        next+=1.5+Math.random()*1.5;
+      var inBar=step%8, bar=((step/8)|0)%4;
+      if(inBar===0||inBar===4) kick(next);
+      if(inBar===4) clap(next);
+      if(inBar%2===1) burst(next,busDrum,7200,0,0,.055,.035);
+      if(inBar===0) bass(next,BASS[bar],.62);
+      if(inBar===4) bass(next,BASS[bar],.34);
+      if(inBar===6) bass(next,BASS[bar]*1.5,.22);
+      pluck(next,ARP[bar][ARPPAT[inBar]],inBar%2===0?.26:.17);
+      if(inBar===2||inBar===6){
+        if(Math.random()<.62){
+          var mv=[-2,-1,-1,0,1,1,2];
+          here+=mv[(Math.random()*mv.length)|0];
+          if(here<0)here=1;
+          if(here>5)here=4;
+          lead(next,LEAD[here],.30,inBar===6?1.5:.9);
+        }
       }
+      step++;next+=EIGHTH;
     }
   }
 
   function build(){
     ctx=new AC();
+    noise=noiseBuf();
+
     master=ctx.createGain();master.gain.value=0;
     tone=ctx.createBiquadFilter();tone.type="lowpass";
-    tone.frequency.value=3200;tone.Q.value=.3;
-    var lim=ctx.createDynamicsCompressor();
-    lim.threshold.value=-9;lim.knee.value=6;lim.ratio.value=8;
-    lim.attack.value=.005;lim.release.value=.25;
+    tone.frequency.value=6000;tone.Q.value=.2;
+    lim=ctx.createDynamicsCompressor();
+    lim.threshold.value=-8;lim.knee.value=8;lim.ratio.value=9;
+    lim.attack.value=.0018;lim.release.value=.20;
     tone.connect(lim);lim.connect(master);master.connect(ctx.destination);
 
-    bus=ctx.createGain();bus.gain.value=1;
-    var dry=ctx.createGain();dry.gain.value=.78;
-    bus.connect(dry);dry.connect(tone);
+    busDrum=ctx.createGain();busDrum.gain.value=.48;busDrum.connect(tone);
 
-    var rev=ctx.createConvolver();rev.buffer=reverbIR(3.4,2.4);
-    wet=ctx.createGain();wet.gain.value=.55;
-    bus.connect(rev);rev.connect(wet);wet.connect(tone);
+    /* a dotted echo gives the pluck its drive without extra notes */
+    echo=ctx.createDelay(1);echo.delayTime.value=EIGHTH*1.5;
+    var fb=ctx.createGain();fb.gain.value=.30;
+    var wet=ctx.createGain();wet.gain.value=.34;
+    echo.connect(fb);fb.connect(echo);echo.connect(wet);wet.connect(tone);
 
-    /* the bed: D2, A2, F#3, held and slowly breathing */
-    [73.42,110.00,185.00].forEach(function(hz,i){
+    busPluck=ctx.createGain();busPluck.gain.value=.50;
+    busPluck.connect(tone);busPluck.connect(echo);
+    busLead=ctx.createGain();busLead.gain.value=.42;
+    busLead.connect(tone);busLead.connect(echo);
+
+    padGain=ctx.createGain();padGain.gain.value=.16;padGain.connect(tone);
+    PAD[0].forEach(function(hz,i){
       var o=ctx.createOscillator(), g=ctx.createGain();
-      o.type=i===2?"triangle":"sine";
-      o.frequency.value=hz;
-      g.gain.value=.075-i*.016;
-      var l=ctx.createOscillator(), lg=ctx.createGain();
-      l.type="sine";l.frequency.value=1/(17+i*6);lg.gain.value=.030-i*.008;
-      l.connect(lg);lg.connect(g.gain);l.start();
-      o.connect(g);g.connect(tone);o.start();
+      o.type=i?"sine":"triangle";o.frequency.value=hz;g.gain.value=.16;
+      o.connect(g);g.connect(padGain);o.start();
+      setInterval(function(){          /* walk the pad through the bars */
+        if(!ctx)return;
+        var bar=((step/8)|0)%4;
+        o.frequency.setTargetAtTime(PAD[bar][i],ctx.currentTime,.18);
+      },400);
     });
 
-    next=ctx.currentTime+.3;
-    timer=setInterval(schedule,300);
+    step=0;next=ctx.currentTime+.15;
+    timer=setInterval(schedule,120);
     schedule();
   }
 
@@ -823,12 +877,10 @@ h2 .hl{color:var(--gold)}
   function play(){
     if(!ctx)build();
     if(ctx.state==="suspended")ctx.resume();
-    on=true;ramp(LEVEL,3.5);paint();
+    on=true;ramp(LEVEL,1.8);paint();
   }
-  function stop(){ if(!ctx)return; on=false;ramp(0,1.1);paint(); }
+  function stop(){ if(!ctx)return; on=false;ramp(0,.9);paint(); }
 
-  /* browsers will not let a page start audio unprompted, so arm on the very
-     first gesture of any kind - the first scroll counts */
   var armed=false;
   function disarm(){
     ["pointerdown","touchend","keydown","click","wheel"].forEach(function(ev){
@@ -837,15 +889,14 @@ h2 .hl{color:var(--gold)}
   }
   function arm(e){
     if(armed)return;
-    /* a tap on the button itself is handled by the button, so it never both
-       starts and stops the music in one press */
+    /* a tap on the button is the button's job, so it never starts and stops
+       the music in a single press */
     if(e&&e.target&&e.target.closest&&e.target.closest("#snd")){armed=true;disarm();return;}
     armed=true;disarm();play();
   }
   ["pointerdown","touchend","keydown","click","wheel"].forEach(function(ev){
     window.addEventListener(ev,arm,{capture:true,passive:true});
   });
-  /* and try straight away, in case this browser already trusts the site */
   try{
     var probe=new AC();
     if(probe.state==="running"){ probe.close(); armed=true; play(); }
@@ -858,17 +909,19 @@ h2 .hl{color:var(--gold)}
     (on&&ctx)?stop():play();
   });
 
+  /* the light softens towards night, so soften the mix with it */
   addEventListener("scroll",function(){
     if(!ctx||!on)return;
     var max=Math.max(1,document.body.scrollHeight-innerHeight);
     var p=Math.min(1,Math.max(0,scrollY/max));
-    tone.frequency.setTargetAtTime(3200-p*2100,ctx.currentTime,1.4);
-    if(wet) wet.gain.setTargetAtTime(.55+p*.30,ctx.currentTime,1.4);
+    tone.frequency.setTargetAtTime(6000-p*3400,ctx.currentTime,1.4);
+    busDrum.gain.setTargetAtTime(.48-p*.24,ctx.currentTime,1.6);
+    padGain.gain.setTargetAtTime(.16+p*.12,ctx.currentTime,1.6);
   },{passive:true});
 
   addEventListener("visibilitychange",function(){
     if(!ctx||!on)return;
-    ramp(document.hidden?0:LEVEL,document.hidden?.35:1.6);
+    ramp(document.hidden?0:LEVEL,document.hidden?.3:1.2);
   });
 
   window.__sea=function(){return {ctx:ctx,master:master,on:on};};
