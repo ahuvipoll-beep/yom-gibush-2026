@@ -57,6 +57,29 @@ main{position:relative;z-index:3}
   background:radial-gradient(60% 50% at 50% 50%,rgba(5,14,30,.62),rgba(5,14,30,0) 72%);
   filter:blur(14px)}
 
+/* ============================ sound toggle ============================== */
+.snd{position:fixed;z-index:6;top:calc(env(safe-area-inset-top) + 14px);inset-inline-start:14px;
+  display:inline-flex;align-items:center;gap:9px;padding:9px 15px 9px 12px;border-radius:999px;
+  background:rgba(8,20,38,.42);border:1px solid rgba(255,255,255,.22);color:var(--cream);
+  font-family:var(--sans);font-weight:400;font-size:12.5px;letter-spacing:.04em;cursor:pointer;
+  -webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);
+  transition:background .3s ease,border-color .3s ease,padding .35s ease,opacity .5s ease;
+  opacity:0;animation:fade .9s 2.4s forwards}
+.snd:hover,.snd:focus-visible{background:rgba(8,20,38,.62);border-color:rgba(255,217,160,.55)}
+.snd:focus-visible{outline:2px solid var(--gold);outline-offset:3px}
+.snd svg{width:17px;height:17px;flex:none;display:block}
+.snd svg .cone{fill:currentColor}
+.snd svg .arc{fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;opacity:0;
+  transition:opacity .3s ease}
+.snd svg .slash{stroke:currentColor;stroke-width:1.7;stroke-linecap:round;opacity:.85;
+  transition:opacity .3s ease}
+.snd[aria-pressed="true"]{border-color:rgba(255,217,160,.5);color:var(--gold);padding-inline-end:12px}
+.snd[aria-pressed="true"] .lbl{display:none}
+.snd[aria-pressed="true"] svg .slash{opacity:0}
+.snd[aria-pressed="true"] svg .arc{opacity:1;animation:ripple 2.6s ease-in-out infinite}
+.snd[aria-pressed="true"] svg .arc:nth-of-type(2){animation-delay:.35s}
+@keyframes ripple{0%,100%{opacity:.35}50%{opacity:1}}
+
 /* ================================ hero ================================== */
 .hero{min-height:100svh;display:flex;flex-direction:column;align-items:center;
   justify-content:center;text-align:center;position:relative;
@@ -222,6 +245,8 @@ h2 .hl{color:var(--gold)}
 </style>
 </head>
 <body>
+<button class="snd" id="snd" type="button" aria-pressed="false"
+        aria-label="הפעלת צלילי ים"><svg viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path class="cone" d="M9.2 3.4 5.4 6.6H3a1 1 0 0 0-1 1v4.8a1 1 0 0 0 1 1h2.4l3.8 3.2a.7.7 0 0 0 1.15-.54V3.94A.7.7 0 0 0 9.2 3.4Z"/><path class="arc" d="M13.2 7.3a3.8 3.8 0 0 1 0 5.4"/><path class="arc" d="M15.6 5.2a7 7 0 0 1 0 9.6"/><path class="slash" d="M13.4 7.6 17.6 12.4M17.6 7.6 13.4 12.4"/></svg><span class="lbl">צלילי ים</span></button>
 <canvas id="view"></canvas>
 <div class="scrim"></div>
 <div class="grain"></div>
@@ -670,6 +695,95 @@ h2 .hl{color:var(--gold)}
   }
   tick();setInterval(tick,1000);
 })();
+/* =====================================================================
+   Sea, synthesised. No audio file: two layers of filtered noise breathing
+   at unrelated rates give surf that never loops, and a slow four-note pad
+   sits under it. Scroll position dims the pad as the page reaches night.
+   Off by default and only ever started by a tap, because people open this
+   at the office.
+   ===================================================================== */
+(function(){
+  var btn=document.getElementById("snd");
+  if(!btn||!(window.AudioContext||window.webkitAudioContext)){ if(btn)btn.remove(); return; }
+  var ctx=null, master=null, tone=null, on=false, surf=[], pad=[];
+
+  function noiseBuffer(){
+    var n=ctx.sampleRate*5, buf=ctx.createBuffer(1,n,ctx.sampleRate), d=buf.getChannelData(0);
+    var b0=0,b1=0,b2=0;
+    for(var i=0;i<n;i++){
+      var w=Math.random()*2-1;                 /* pinked: surf has no top end */
+      b0=.99765*b0+w*.0990460;
+      b1=.96300*b1+w*.2965164;
+      b2=.57000*b2+w*1.0526913;
+      d[i]=(b0+b1+b2+w*.1848)*.22;
+    }
+    return buf;
+  }
+  function lfo(rate,depth,target,base){
+    var o=ctx.createOscillator(), g=ctx.createGain();
+    o.type="sine";o.frequency.value=rate;g.gain.value=depth;
+    o.connect(g);g.connect(target);target.value=base;o.start();
+    return o;
+  }
+  function build(){
+    ctx=new (window.AudioContext||window.webkitAudioContext)();
+    master=ctx.createGain();master.gain.value=0;
+    tone=ctx.createBiquadFilter();tone.type="lowpass";tone.frequency.value=2400;tone.Q.value=.4;
+    tone.connect(master);master.connect(ctx.destination);
+
+    var buf=noiseBuffer();
+    /* two swells at 14s and 23s: their drift is what stops it sounding looped */
+    [{f:420,q:.55,rate:1/14,g:.34},{f:1100,q:.8,rate:1/23,g:.20}].forEach(function(s){
+      var src=ctx.createBufferSource();src.buffer=buf;src.loop=true;
+      var bp=ctx.createBiquadFilter();bp.type="bandpass";bp.frequency.value=s.f;bp.Q.value=s.q;
+      var gn=ctx.createGain();
+      src.connect(bp);bp.connect(gn);gn.connect(tone);
+      lfo(s.rate,s.g*.85,gn.gain,s.g);
+      lfo(s.rate*0.61,s.f*.35,bp.frequency,s.f);
+      src.start();
+      surf.push(gn);
+    });
+
+    /* a wide, slow D-major-ish pad, barely there */
+    [146.83,220.00,369.99,554.37].forEach(function(hz,i){
+      var o=ctx.createOscillator(), g=ctx.createGain();
+      o.type=i<2?"sine":"triangle";
+      o.frequency.value=hz;
+      g.gain.value=0;
+      o.connect(g);g.connect(tone);
+      lfo(1/(19+i*7), .022, g.gain, .030-i*.005);
+      lfo(1/(11+i*3), 3.2, o.detune, i%2?4:-4);
+      o.start();
+      pad.push(g);
+    });
+  }
+  function ramp(to,secs){
+    var t=ctx.currentTime;
+    master.gain.cancelScheduledValues(t);
+    master.gain.setValueAtTime(master.gain.value,t);
+    master.gain.linearRampToValueAtTime(to,t+secs);
+  }
+  btn.addEventListener("click",function(){
+    if(!ctx)build();
+    if(ctx.state==="suspended")ctx.resume();
+    on=!on;
+    btn.setAttribute("aria-pressed",on?"true":"false");
+    btn.setAttribute("aria-label",on?"השתקת צלילי ים":"הפעלת צלילי ים");
+    ramp(on?0.24:0, on?3.0:1.2);
+  });
+  /* the light dims towards night, so let the sound dim with it */
+  addEventListener("scroll",function(){
+    if(!ctx||!on)return;
+    var max=Math.max(1,document.body.scrollHeight-innerHeight);
+    var p=Math.min(1,Math.max(0,scrollY/max));
+    tone.frequency.setTargetAtTime(2400-p*1650,ctx.currentTime,1.2);
+  },{passive:true});
+  addEventListener("visibilitychange",function(){
+    if(!ctx||!on)return;
+    ramp(document.hidden?0:0.24,document.hidden?0.4:1.6);
+  });
+})();
+
 </script>
 </body>
 </html>
