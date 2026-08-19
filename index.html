@@ -821,10 +821,27 @@ h2 .hl{color:var(--gold)}
     }
   }
 
+  /* If a licensed music.mp3 is dropped next to this page it takes over and the
+     synth stands down. Nothing else changes: same fades, same limiter, same
+     button, same auto-arm. Swapping in a real track is a file copy. */
+  var mode="synth", el=null;
+  try{
+    fetch("music.mp3",{method:"HEAD"}).then(function(r){
+      if(r.ok) mode="file";
+    }).catch(function(){});
+  }catch(e){}
+
+  function buildFile(){
+    el=new Audio("music.mp3");
+    el.loop=true;el.preload="auto";el.crossOrigin="anonymous";
+    var src=ctx.createMediaElementSource(el);
+    src.connect(tone);
+    var pr=el.play();
+    if(pr&&pr.catch) pr.catch(function(){ mode="synth"; buildSynth(); });
+  }
+
   function build(){
     ctx=new AC();
-    noise=noiseBuf();
-
     master=ctx.createGain();master.gain.value=0;
     tone=ctx.createBiquadFilter();tone.type="lowpass";
     tone.frequency.value=6000;tone.Q.value=.2;
@@ -832,6 +849,11 @@ h2 .hl{color:var(--gold)}
     lim.threshold.value=-8;lim.knee.value=8;lim.ratio.value=9;
     lim.attack.value=.0018;lim.release.value=.20;
     tone.connect(lim);lim.connect(master);master.connect(ctx.destination);
+    if(mode==="file") buildFile(); else buildSynth();
+  }
+
+  function buildSynth(){
+    noise=noiseBuf();
 
     busDrum=ctx.createGain();busDrum.gain.value=.48;busDrum.connect(tone);
 
@@ -877,9 +899,14 @@ h2 .hl{color:var(--gold)}
   function play(){
     if(!ctx)build();
     if(ctx.state==="suspended")ctx.resume();
+    if(el&&el.paused) el.play();
     on=true;ramp(LEVEL,1.8);paint();
   }
-  function stop(){ if(!ctx)return; on=false;ramp(0,.9);paint(); }
+  function stop(){
+    if(!ctx)return;
+    on=false;ramp(0,.9);paint();
+    if(el) setTimeout(function(){ if(!on) el.pause(); },1000);
+  }
 
   var armed=false;
   function disarm(){
@@ -915,8 +942,8 @@ h2 .hl{color:var(--gold)}
     var max=Math.max(1,document.body.scrollHeight-innerHeight);
     var p=Math.min(1,Math.max(0,scrollY/max));
     tone.frequency.setTargetAtTime(6000-p*3400,ctx.currentTime,1.4);
-    busDrum.gain.setTargetAtTime(.48-p*.24,ctx.currentTime,1.6);
-    padGain.gain.setTargetAtTime(.16+p*.12,ctx.currentTime,1.6);
+    if(busDrum) busDrum.gain.setTargetAtTime(.48-p*.24,ctx.currentTime,1.6);
+    if(padGain) padGain.gain.setTargetAtTime(.16+p*.12,ctx.currentTime,1.6);
   },{passive:true});
 
   addEventListener("visibilitychange",function(){
