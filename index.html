@@ -697,14 +697,17 @@ h2 .hl{color:var(--gold)}
 })();
 /* =====================================================================
    The soundtrack, synthesised. No audio file: no licensing exposure, no
-   download weight, and nothing that can be taken down.
+   download weight, nothing that can be taken down.
 
-   An original piece: a I-V-vi-IV loop in D at 100bpm carries kick, bass,
-   shaker, clap and a running pluck, with a lead line generated fresh on
-   every pass over a D pentatonic, so the loop never announces itself.
-   Browsers refuse to start audio unprompted, so it arms on the first
-   gesture of any kind - the first scroll counts - and the corner button is
-   only there to switch it off.
+   An original ceremonial march, because the invitation says the staff are
+   "receiving audience" for the day - so give them a guard turnout. Brass
+   section, military snare, bass drum and oom-pah bass over an eight-bar
+   theme in D at 112bpm.
+
+   If a licensed music.mp3 is dropped beside this page it takes over and the
+   synth stands down. Browsers refuse to start audio unprompted, so it arms
+   on the first gesture of any kind - the first scroll counts - and the
+   corner button is only there to switch it off.
    ===================================================================== */
 (function(){
   var btn=document.getElementById("snd");
@@ -712,124 +715,163 @@ h2 .hl{color:var(--gold)}
   if(!AC){ if(btn)btn.remove(); return; }
 
   var ctx=null,master=null,tone=null,lim=null,noise=null;
-  var busPluck=null,busLead=null,busDrum=null,padGain=null,echo=null;
-  var timer=null,on=false,step=0,next=0;
-  var LEVEL=0.78, EIGHTH=30/100;   /* 100bpm -> seconds per eighth note */
+  var busBrass=null,busDrum=null,busBass=null,hall=null;
+  var timer=null,on=false,step=0,next=0,el=null,mode="synth";
+  var LEVEL=0.80;
+  var BPM=112, SIX=15/112;            /* seconds per sixteenth at 112bpm */
 
-  /* D - A - Bm - G : the progression every uplifting song is built on */
-  var BASS=[146.83,110.00,123.47,98.00];
-  var ARP=[[587.33,739.99,880.00,1174.66],
-           [440.00,554.37,659.25,880.00],
-           [493.88,587.33,739.99,987.77],
-           [392.00,493.88,587.33,784.00]];
-  var PAD=[[146.83,220.00,369.99],
-           [110.00,164.81,329.63],
-           [123.47,185.00,293.66],
-           [98.00,146.83,246.94]];
-  var LEAD=[587.33,659.25,739.99,880.00,987.77,1174.66];
-  var ARPPAT=[0,2,1,3,2,0,3,1];
-  var here=2;
+  /* D major. Semitones above D4, so the brass sits in a real bugle range. */
+  function hz(n){ return 293.66*Math.pow(2,n/12); }
+  var D=0,Fs=4,A=7,B=9,Cs=13,D5=12,E5=14,Fs5=16,G5=17,A5=19,B5=21,D6=24;
+
+  /* eight bars: D D A A D G A D */
+  var CHORD=[[0,4,7],[0,4,7],[7,11,14],[7,11,14],[0,4,7],[5,9,12],[7,11,14],[0,4,7]];
+  var ROOT =[  -12,   -12,    -5,   -5,   -12,    -7,   -5,  -12];
+  var FIFTH=[   -5,    -5,   -17,  -17,    -5,     0,  -17,   -5];
+
+  /* the theme: [sixteenth in the loop, semitone, length in sixteenths] */
+  var THEME=[
+    [  0,A ,3],[  3,D5,1],[  4,D5,3],[  7,Fs5,1],[  8,A5,4],[ 12,Fs5,2],[ 14,D5,2],
+    [ 16,E5,3],[ 19,Fs5,1],[ 20,G5,4],[ 24,Fs5,6],[ 30,A ,2],
+    [ 32,Cs,3],[ 35,E5,1],[ 36,E5,4],[ 40,A5,4],[ 44,G5,2],[ 46,E5,2],
+    [ 48,D5,3],[ 51,Cs,1],[ 52,B ,4],[ 56,A ,8],
+    [ 64,A ,3],[ 67,D5,1],[ 68,D5,3],[ 71,Fs5,1],[ 72,A5,4],[ 76,D6,4],
+    [ 80,B5,4],[ 84,A5,4],[ 88,G5,4],[ 92,E5,4],
+    [ 96,Fs5,3],[ 99,G5,1],[100,A5,4],[104,E5,4],[108,Cs,4],
+    [112,D5,10]
+  ];
+  var THEMEAT={};
+  THEME.forEach(function(n){ THEMEAT[n[0]]=n; });
 
   function noiseBuf(){
     var n=ctx.sampleRate*2, b=ctx.createBuffer(1,n,ctx.sampleRate), d=b.getChannelData(0);
     for(var i=0;i<n;i++) d[i]=Math.random()*2-1;
     return b;
   }
-  function burst(t,dest,hp,bp,q,vel,dec){
+  function hallIR(sec,decay){
+    var n=Math.floor(ctx.sampleRate*sec), b=ctx.createBuffer(2,n,ctx.sampleRate);
+    for(var c=0;c<2;c++){
+      var d=b.getChannelData(c);
+      for(var i=0;i<n;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/n,decay);
+    }
+    return b;
+  }
+
+  /* a brass voice: detuned saws opened by a filter envelope, with vibrato
+     only once the note has had time to settle - which is what makes it read
+     as a played instrument rather than a synth pad */
+  function brass(t,f,dur,vel,dest){
+    var g=ctx.createGain(), flt=ctx.createBiquadFilter();
+    flt.type="lowpass";flt.Q.value=3.2;
+    flt.frequency.setValueAtTime(520,t);
+    flt.frequency.linearRampToValueAtTime(f*4.4+900,t+.05);
+    flt.frequency.exponentialRampToValueAtTime(Math.max(400,f*2.2+500),t+dur*.9);
+    g.gain.setValueAtTime(.0001,t);
+    g.gain.exponentialRampToValueAtTime(vel,t+.035);
+    g.gain.setValueAtTime(vel,t+dur*.72);
+    g.gain.exponentialRampToValueAtTime(.0001,t+dur);
+    flt.connect(g);g.connect(dest||busBrass);
+
+    [-7,0,7].forEach(function(cents,i){
+      var o=ctx.createOscillator();
+      o.type=i===1?"sawtooth":"sawtooth";
+      o.frequency.value=f;o.detune.value=cents;
+      if(dur>.28){
+        var v=ctx.createOscillator(), vg=ctx.createGain();
+        v.type="sine";v.frequency.value=5.4;
+        vg.gain.setValueAtTime(0,t);
+        vg.gain.linearRampToValueAtTime(6,t+Math.min(.35,dur*.5));
+        v.connect(vg);vg.connect(o.detune);v.start(t);v.stop(t+dur+.1);
+      }
+      o.connect(flt);o.start(t);o.stop(t+dur+.08);
+    });
+    var sub=ctx.createOscillator();
+    sub.type="square";sub.frequency.value=f/2;
+    var sg=ctx.createGain();sg.gain.value=.22;
+    sub.connect(sg);sg.connect(flt);
+    sub.start(t);sub.stop(t+dur+.08);
+  }
+
+  function snare(t,vel,buzz){
     var src=ctx.createBufferSource();src.buffer=noise;
-    var f=ctx.createBiquadFilter();
-    if(bp){f.type="bandpass";f.frequency.value=bp;f.Q.value=q||1;}
-    else {f.type="highpass";f.frequency.value=hp;}
+    var bp=ctx.createBiquadFilter();bp.type="bandpass";
+    bp.frequency.value=buzz?3200:1900;bp.Q.value=buzz?.7:1.1;
+    var hp=ctx.createBiquadFilter();hp.type="highpass";hp.frequency.value=380;
     var g=ctx.createGain();
+    var dec=buzz?.09:.055;
     g.gain.setValueAtTime(vel,t);
     g.gain.exponentialRampToValueAtTime(.0001,t+dec);
-    src.connect(f);f.connect(g);g.connect(dest);
-    src.start(t);src.stop(t+dec+.05);
+    src.connect(bp);bp.connect(hp);hp.connect(g);g.connect(busDrum);
+    src.start(t);src.stop(t+dec+.03);
   }
-  function kick(t){
+  function bassDrum(t,vel){
     var o=ctx.createOscillator(), g=ctx.createGain();
     o.type="sine";
-    o.frequency.setValueAtTime(140,t);
-    o.frequency.exponentialRampToValueAtTime(44,t+.10);
-    g.gain.setValueAtTime(.80,t);
-    g.gain.exponentialRampToValueAtTime(.0001,t+.30);
+    o.frequency.setValueAtTime(120,t);
+    o.frequency.exponentialRampToValueAtTime(42,t+.09);
+    g.gain.setValueAtTime(vel,t);
+    g.gain.exponentialRampToValueAtTime(.0001,t+.34);
     o.connect(g);g.connect(busDrum);
-    o.start(t);o.stop(t+.34);
+    o.start(t);o.stop(t+.38);
   }
-  function clap(t){
-    burst(t,      busDrum,0,1500,1.1,.30,.02);
-    burst(t+.012, busDrum,0,1500,1.1,.24,.03);
-    burst(t+.028, busDrum,0,1400,0.9,.30,.17);
+  function crash(t,vel){
+    var src=ctx.createBufferSource();src.buffer=noise;
+    var hp=ctx.createBiquadFilter();hp.type="highpass";hp.frequency.value=5200;
+    var g=ctx.createGain();
+    g.gain.setValueAtTime(vel,t);
+    g.gain.exponentialRampToValueAtTime(.0001,t+1.5);
+    src.connect(hp);hp.connect(g);g.connect(busDrum);
+    src.start(t);src.stop(t+1.6);
   }
-  function bass(t,hz,dec){
+  function bassNote(t,f,dur,vel){
     var o=ctx.createOscillator(), o2=ctx.createOscillator(),
-        g=ctx.createGain(), f=ctx.createBiquadFilter();
-    f.type="lowpass";f.frequency.value=520;f.Q.value=.7;
-    o.type="triangle";o.frequency.value=hz;
-    o2.type="sine";o2.frequency.value=hz/2;
+        g=ctx.createGain(), flt=ctx.createBiquadFilter();
+    flt.type="lowpass";flt.frequency.value=680;flt.Q.value=.8;
+    o.type="sawtooth";o.frequency.value=f;
+    o2.type="sine";o2.frequency.value=f/2;
     g.gain.setValueAtTime(.0001,t);
-    g.gain.exponentialRampToValueAtTime(.42,t+.012);
-    g.gain.exponentialRampToValueAtTime(.0001,t+dec);
-    o.connect(f);o2.connect(f);f.connect(g);g.connect(tone);
-    o.start(t);o2.start(t);o.stop(t+dec+.05);o2.stop(t+dec+.05);
-  }
-  function pluck(t,hz,vel){
-    var o=ctx.createOscillator(), g=ctx.createGain(), f=ctx.createBiquadFilter();
-    f.type="lowpass";f.frequency.setValueAtTime(4200,t);
-    f.frequency.exponentialRampToValueAtTime(900,t+.30);
-    o.type="triangle";o.frequency.value=hz;
-    g.gain.setValueAtTime(.0001,t);
-    g.gain.exponentialRampToValueAtTime(vel,t+.008);
-    g.gain.exponentialRampToValueAtTime(.0001,t+.42);
-    o.connect(f);f.connect(g);g.connect(busPluck);
-    o.start(t);o.stop(t+.48);
-  }
-  function lead(t,hz,vel,dur){
-    [[1,1],[2.0,.22],[3.0,.08]].forEach(function(pp){
-      var o=ctx.createOscillator(), g=ctx.createGain();
-      o.type="sine";o.frequency.value=hz*pp[0];
-      g.gain.setValueAtTime(.0001,t);
-      g.gain.exponentialRampToValueAtTime(Math.max(.0002,vel*pp[1]),t+.03);
-      g.gain.exponentialRampToValueAtTime(.0001,t+dur);
-      o.connect(g);g.connect(busLead);
-      o.start(t);o.stop(t+dur+.1);
-    });
+    g.gain.exponentialRampToValueAtTime(vel,t+.02);
+    g.gain.exponentialRampToValueAtTime(.0001,t+dur);
+    o.connect(flt);o2.connect(flt);flt.connect(g);g.connect(busBass);
+    o.start(t);o2.start(t);o.stop(t+dur+.05);o2.stop(t+dur+.05);
   }
 
   function schedule(){
     if(!ctx)return;
-    var ahead=ctx.currentTime+.9;
+    var ahead=ctx.currentTime+.7;
     while(next<ahead){
-      var inBar=step%8, bar=((step/8)|0)%4;
-      if(inBar===0||inBar===4) kick(next);
-      if(inBar===4) clap(next);
-      if(inBar%2===1) burst(next,busDrum,7200,0,0,.055,.035);
-      if(inBar===0) bass(next,BASS[bar],.62);
-      if(inBar===4) bass(next,BASS[bar],.34);
-      if(inBar===6) bass(next,BASS[bar]*1.5,.22);
-      pluck(next,ARP[bar][ARPPAT[inBar]],inBar%2===0?.26:.17);
-      if(inBar===2||inBar===6){
-        if(Math.random()<.62){
-          var mv=[-2,-1,-1,0,1,1,2];
-          here+=mv[(Math.random()*mv.length)|0];
-          if(here<0)here=1;
-          if(here>5)here=4;
-          lead(next,LEAD[here],.30,inBar===6?1.5:.9);
-        }
+      var i=step%128, bar=(i/16)|0, inBar=i%16, beat=inBar%4;
+
+      /* --- percussion: the guard keeps time --- */
+      if(inBar===0){ bassDrum(next,.85); if(bar===0||bar===4) crash(next,.16); }
+      if(inBar===8) bassDrum(next,.62);
+      if(beat===0) snare(next,inBar===0?.34:.22,false);
+      else if(beat===2) snare(next,.13,false);
+      else snare(next,.055,true);
+      if(inBar===14&&(bar===3||bar===7)){          /* a roll into the phrase */
+        for(var r=0;r<8;r++) snare(next+r*SIX/4,.10+r*.016,true);
       }
-      step++;next+=EIGHTH;
+
+      /* --- oom-pah under the tune --- */
+      if(inBar===0)  bassNote(next,hz(ROOT[bar]),SIX*3.2,.40);
+      if(inBar===8)  bassNote(next,hz(FIFTH[bar]),SIX*3.2,.34);
+      if(inBar===4||inBar===12){
+        CHORD[bar].forEach(function(sn){
+          brass(next,hz(sn+12),SIX*2.4,.055);
+        });
+      }
+
+      /* --- the theme, doubled a sixth below like a brass section --- */
+      var n=THEMEAT[i];
+      if(n){
+        var dur=n[2]*SIX*.94;
+        brass(next,hz(n[1]),dur,.165);
+        brass(next,hz(n[1]-9),dur,.075);
+      }
+
+      step++;next+=SIX;
     }
   }
-
-  /* If a licensed music.mp3 is dropped next to this page it takes over and the
-     synth stands down. Nothing else changes: same fades, same limiter, same
-     button, same auto-arm. Swapping in a real track is a file copy. */
-  var mode="synth", el=null;
-  try{
-    fetch("music.mp3",{method:"HEAD"}).then(function(r){
-      if(r.ok) mode="file";
-    }).catch(function(){});
-  }catch(e){}
 
   function buildFile(){
     el=new Audio("music.mp3");
@@ -837,53 +879,44 @@ h2 .hl{color:var(--gold)}
     var src=ctx.createMediaElementSource(el);
     src.connect(tone);
     var pr=el.play();
-    if(pr&&pr.catch) pr.catch(function(){ mode="synth"; buildSynth(); });
+    if(pr&&pr.catch) pr.catch(function(){ el=null;mode="synth";buildSynth(); });
+  }
+
+  function buildSynth(){
+    noise=noiseBuf();
+
+    hall=ctx.createConvolver();hall.buffer=hallIR(2.2,3.0);
+    var wet=ctx.createGain();wet.gain.value=.30;
+    hall.connect(wet);wet.connect(tone);
+
+    busBrass=ctx.createGain();busBrass.gain.value=.52;
+    busBrass.connect(tone);busBrass.connect(hall);
+    busDrum=ctx.createGain();busDrum.gain.value=.50;
+    busDrum.connect(tone);busDrum.connect(hall);
+    busBass=ctx.createGain();busBass.gain.value=.60;
+    busBass.connect(tone);
+
+    step=0;next=ctx.currentTime+.12;
+    timer=setInterval(schedule,90);
+    schedule();
   }
 
   function build(){
     ctx=new AC();
     master=ctx.createGain();master.gain.value=0;
     tone=ctx.createBiquadFilter();tone.type="lowpass";
-    tone.frequency.value=6000;tone.Q.value=.2;
+    tone.frequency.value=7000;tone.Q.value=.2;
     lim=ctx.createDynamicsCompressor();
-    lim.threshold.value=-8;lim.knee.value=8;lim.ratio.value=9;
+    lim.threshold.value=-10;lim.knee.value=8;lim.ratio.value=10;
     lim.attack.value=.0018;lim.release.value=.20;
     tone.connect(lim);lim.connect(master);master.connect(ctx.destination);
     if(mode==="file") buildFile(); else buildSynth();
   }
 
-  function buildSynth(){
-    noise=noiseBuf();
-
-    busDrum=ctx.createGain();busDrum.gain.value=.48;busDrum.connect(tone);
-
-    /* a dotted echo gives the pluck its drive without extra notes */
-    echo=ctx.createDelay(1);echo.delayTime.value=EIGHTH*1.5;
-    var fb=ctx.createGain();fb.gain.value=.30;
-    var wet=ctx.createGain();wet.gain.value=.34;
-    echo.connect(fb);fb.connect(echo);echo.connect(wet);wet.connect(tone);
-
-    busPluck=ctx.createGain();busPluck.gain.value=.50;
-    busPluck.connect(tone);busPluck.connect(echo);
-    busLead=ctx.createGain();busLead.gain.value=.42;
-    busLead.connect(tone);busLead.connect(echo);
-
-    padGain=ctx.createGain();padGain.gain.value=.16;padGain.connect(tone);
-    PAD[0].forEach(function(hz,i){
-      var o=ctx.createOscillator(), g=ctx.createGain();
-      o.type=i?"sine":"triangle";o.frequency.value=hz;g.gain.value=.16;
-      o.connect(g);g.connect(padGain);o.start();
-      setInterval(function(){          /* walk the pad through the bars */
-        if(!ctx)return;
-        var bar=((step/8)|0)%4;
-        o.frequency.setTargetAtTime(PAD[bar][i],ctx.currentTime,.18);
-      },400);
-    });
-
-    step=0;next=ctx.currentTime+.15;
-    timer=setInterval(schedule,120);
-    schedule();
-  }
+  try{
+    fetch("music.mp3",{method:"HEAD"}).then(function(r){ if(r.ok) mode="file"; })
+      .catch(function(){});
+  }catch(e){}
 
   function ramp(to,secs){
     var t=ctx.currentTime;
@@ -900,12 +933,12 @@ h2 .hl{color:var(--gold)}
     if(!ctx)build();
     if(ctx.state==="suspended")ctx.resume();
     if(el&&el.paused) el.play();
-    on=true;ramp(LEVEL,1.8);paint();
+    on=true;ramp(LEVEL,1.4);paint();
   }
   function stop(){
     if(!ctx)return;
-    on=false;ramp(0,.9);paint();
-    if(el) setTimeout(function(){ if(!on) el.pause(); },1000);
+    on=false;ramp(0,.8);paint();
+    if(el) setTimeout(function(){ if(!on) el.pause(); },900);
   }
 
   var armed=false;
@@ -936,14 +969,15 @@ h2 .hl{color:var(--gold)}
     (on&&ctx)?stop():play();
   });
 
-  /* the light softens towards night, so soften the mix with it */
+  /* the parade passes on as the page reaches night: brass and drums step
+     back, the hall stays */
   addEventListener("scroll",function(){
     if(!ctx||!on)return;
     var max=Math.max(1,document.body.scrollHeight-innerHeight);
     var p=Math.min(1,Math.max(0,scrollY/max));
-    tone.frequency.setTargetAtTime(6000-p*3400,ctx.currentTime,1.4);
-    if(busDrum) busDrum.gain.setTargetAtTime(.48-p*.24,ctx.currentTime,1.6);
-    if(padGain) padGain.gain.setTargetAtTime(.16+p*.12,ctx.currentTime,1.6);
+    tone.frequency.setTargetAtTime(7000-p*4200,ctx.currentTime,1.4);
+    if(busDrum)  busDrum.gain.setTargetAtTime(.50-p*.26,ctx.currentTime,1.6);
+    if(busBrass) busBrass.gain.setTargetAtTime(.52-p*.14,ctx.currentTime,1.6);
   },{passive:true});
 
   addEventListener("visibilitychange",function(){
